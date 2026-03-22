@@ -4,3 +4,14 @@ dataset/
 __pycache__/
 *.pyc
 .env
+.env*.local
+node_modules/
+.next/
+.DS_Store
+.vercel/
+.snowflake/
+.v0-trash/
+__v0_runtime_loader.js
+__v0_devtools.tsx
+__v0_jsx-dev-runtime.ts
+next.user-config.*
