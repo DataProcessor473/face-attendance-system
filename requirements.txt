@@ -1,0 +1,16 @@
+# ── requirements.txt ─────────────────────────────────────────────────────────
+# Install with:  pip install -r requirements.txt
+
+face-recognition       # FaceNet-style 128-d embeddings via dlib
+opencv-python          # webcam capture + drawing
+numpy
+imutils                # path utilities
+cmake                  # required by dlib (install before face-recognition)
+
+# ── dlib install note ─────────────────────────────────────────────────────────
+# On most systems:
+#   pip install cmake dlib face-recognition opencv-python imutils numpy
+#
+# If dlib fails:
+#   conda install -c conda-forge dlib
+# ─────────────────────────────────────────────────────────────────────────────

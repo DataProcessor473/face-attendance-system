@@ -1,0 +1,5 @@
+encodings.pkl
+attendance.csv
+dataset/
+__pycache__/
+*.pyc
