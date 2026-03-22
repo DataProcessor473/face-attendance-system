@@ -5,14 +5,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Spinner } from "@/components/ui/spinner"
 import { RefreshCw, UserPlus, CheckCircle } from "lucide-react"
 
-const API_BASE = "http://localhost:8000"
+const API_BASE = "https://face-attendance-system-dgj7.onrender.com"
 
 interface Student {
   name: string
-  photo_count: number
+  photos: number
 }
 
 export function StudentsListTab() {
@@ -24,15 +23,15 @@ export function StudentsListTab() {
 
   const fetchStudents = useCallback(async (showRefreshing = false) => {
     if (showRefreshing) setIsRefreshing(true)
-    
     try {
       const response = await fetch(`${API_BASE}/students`)
       if (response.ok) {
         const data = await response.json()
-        setStudents(data)
+        // API returns { students: [...], total: N }
+        setStudents(Array.isArray(data) ? data : data.students ?? [])
       }
     } catch (err) {
-      console.log("[v0] Failed to fetch students:", err)
+      console.log("Failed to fetch students:", err)
     } finally {
       setIsLoading(false)
       setIsRefreshing(false)
@@ -46,20 +45,18 @@ export function StudentsListTab() {
   const handleRetrain = useCallback(async (studentName: string) => {
     setRetrainingStudent(studentName)
     setRetrainedStudent(null)
-
     try {
       const response = await fetch(`${API_BASE}/register/train`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: studentName }),
       })
-
       if (response.ok) {
         setRetrainedStudent(studentName)
         setTimeout(() => setRetrainedStudent(null), 3000)
       }
     } catch (err) {
-      console.log("[v0] Retrain failed:", err)
+      console.log("Retrain failed:", err)
     } finally {
       setRetrainingStudent(null)
     }
@@ -79,20 +76,15 @@ export function StudentsListTab() {
           size="sm"
           onClick={() => fetchStudents(true)}
           disabled={isRefreshing}
-          className="border-border hover:bg-secondary"
         >
-          {isRefreshing ? (
-            <Spinner className="mr-2" />
-          ) : (
-            <RefreshCw className="mr-2 h-4 w-4" />
-          )}
-          Refresh
+          <RefreshCw className="mr-2 h-4 w-4" />
+          {isRefreshing ? "Refreshing..." : "Refresh"}
         </Button>
       </CardHeader>
       <CardContent>
         {isLoading ? (
           <div className="flex items-center justify-center py-12">
-            <Spinner className="h-8 w-8" />
+            <p className="text-muted-foreground">Loading students...</p>
           </div>
         ) : students.length === 0 ? (
           <div className="text-center py-12">
@@ -106,9 +98,9 @@ export function StudentsListTab() {
           <Table>
             <TableHeader>
               <TableRow className="border-border">
-                <TableHead className="text-muted-foreground">Name</TableHead>
-                <TableHead className="text-muted-foreground">Photos Captured</TableHead>
-                <TableHead className="text-muted-foreground text-right">Action</TableHead>
+                <TableHead>Name</TableHead>
+                <TableHead>Photos</TableHead>
+                <TableHead className="text-right">Action</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -120,7 +112,7 @@ export function StudentsListTab() {
                     </Badge>
                   </TableCell>
                   <TableCell className="text-foreground">
-                    {student.photo_count} photo{student.photo_count !== 1 ? "s" : ""}
+                    {student.photos} photo{student.photos !== 1 ? "s" : ""}
                   </TableCell>
                   <TableCell className="text-right">
                     {retrainedStudent === student.name ? (
@@ -134,19 +126,9 @@ export function StudentsListTab() {
                         size="sm"
                         onClick={() => handleRetrain(student.name)}
                         disabled={retrainingStudent === student.name}
-                        className="border-border hover:bg-secondary"
                       >
-                        {retrainingStudent === student.name ? (
-                          <>
-                            <Spinner className="mr-2" />
-                            Retraining...
-                          </>
-                        ) : (
-                          <>
-                            <RefreshCw className="mr-2 h-4 w-4" />
-                            Retrain
-                          </>
-                        )}
+                        <RefreshCw className="mr-2 h-4 w-4" />
+                        {retrainingStudent === student.name ? "Retraining..." : "Retrain"}
                       </Button>
                     )}
                   </TableCell>
