@@ -20,11 +20,15 @@ app = FastAPI(title="Face Attendance API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "https://creative-tanuki-c424cb.netlify.app",
+        "http://localhost:3000",
+        "*"
+    ],
     allow_methods=["*"],
     allow_headers=["*"],
+    allow_credentials=True,
 )
-
 # ── Supabase client ───────────────────────────────────────────────────────────
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
