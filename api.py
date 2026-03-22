@@ -1,18 +1,20 @@
 """
-api.py - Full version with student registration + live retraining
+api.py - Supabase version
+Stores encodings and attendance in Supabase cloud database
 """
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 import cv2
 import numpy as np
-import pickle
-import csv
 import os
 import base64
 from deepface import DeepFace
-from attendance import AttendanceLogger
 from datetime import datetime
+from dotenv import load_dotenv
+from supabase import create_client, Client
+
+load_dotenv()
 
 app = FastAPI(title="Face Attendance API")
 
@@ -23,29 +25,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-ENCODINGS_FILE = "encodings.pkl"
-DATASET_PATH   = "dataset"
+# ── Supabase client ───────────────────────────────────────────────────────────
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+print("✅ Connected to Supabase")
 
-# ── Load encodings ────────────────────────────────────────────────────────────
-def load_encodings():
-    global known_encodings, known_names
-    if os.path.exists(ENCODINGS_FILE):
-        with open(ENCODINGS_FILE, "rb") as f:
-            data = pickle.load(f)
-        known_encodings = [np.array(e, dtype=np.float64) for e in data["encodings"]]
-        known_names     = data["names"]
-    else:
-        known_encodings = []
-        known_names     = []
-    print(f"✅ Loaded {len(known_encodings)} encodings for "
-          f"{len(set(known_names))} students.")
-
-load_encodings()
-logger = AttendanceLogger()
+# ── Session tracker (in-memory) ───────────────────────────────────────────────
+session_marked: set = set()
 # ─────────────────────────────────────────────────────────────────────────────
 
 
 def cosine_similarity(a, b):
+    a = np.array(a, dtype=np.float64)
+    b = np.array(b, dtype=np.float64)
     norm_a = np.linalg.norm(a)
     norm_b = np.linalg.norm(b)
     if norm_a == 0 or norm_b == 0:
@@ -61,6 +54,12 @@ def decode_base64_image(image_data: str):
     return cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
 
 
+def load_encodings_from_supabase():
+    """Load all encodings from Supabase."""
+    response = supabase.table("encodings").select("*").execute()
+    return response.data or []
+
+
 def process_frame(frame):
     try:
         emb_obj = DeepFace.represent(
@@ -68,23 +67,34 @@ def process_frame(frame):
             model_name="Facenet",
             enforce_detection=False
         )
-        emb  = np.array(emb_obj[0]["embedding"], dtype=np.float64)
-        sims = [cosine_similarity(emb, k) for k in known_encodings]
+        emb = np.array(emb_obj[0]["embedding"], dtype=np.float64)
 
-        if not sims:
+        # Load encodings from Supabase
+        records = load_encodings_from_supabase()
+        if not records:
             return {"name": "Unknown", "confidence": 0.0, "marked": False,
                     "already_marked": False, "session": [], "time": datetime.now().strftime("%H:%M:%S")}
 
-        best_idx   = int(np.argmax(sims))
-        best_sim   = sims[best_idx]
+        sims     = [cosine_similarity(emb, r["embedding"]) for r in records]
+        best_idx = int(np.argmax(sims))
+        best_sim = sims[best_idx]
         confidence = round(best_sim * 100, 1)
 
-        print(f"[Debug] Best: {known_names[best_idx]} | Sim: {best_sim:.4f} | Conf: {confidence}%")
+        print(f"[Debug] Best: {records[best_idx]['student_name']} | Sim: {best_sim:.4f} | Conf: {confidence}%")
 
         THRESHOLD = 0.70
         if best_sim >= THRESHOLD:
-            name = known_names[best_idx]
-            logger.mark(name)
+            name = records[best_idx]["student_name"]
+            # Mark attendance if not already marked
+            if name not in session_marked:
+                session_marked.add(name)
+                now = datetime.now()
+                supabase.table("attendance").insert({
+                    "name": name,
+                    "date": now.strftime("%Y-%m-%d"),
+                    "time": now.strftime("%H:%M:%S")
+                }).execute()
+                print(f"[Attendance] ✅ Marked: {name}")
         else:
             name       = "Unknown"
             confidence = round(best_sim * 100, 1)
@@ -96,14 +106,14 @@ def process_frame(frame):
     return {
         "name":           name,
         "confidence":     confidence,
-        "marked":         logger.already_marked(name),
-        "already_marked": logger.already_marked(name),
-        "session":        logger.get_session_list(),
+        "marked":         name in session_marked,
+        "already_marked": name in session_marked,
+        "session":        list(session_marked),
         "time":           datetime.now().strftime("%H:%M:%S"),
     }
 
 
-# ── Recognition ───────────────────────────────────────────────────────────────
+# ── Routes ────────────────────────────────────────────────────────────────────
 @app.post("/recognize")
 async def recognize(request: Request):
     content_type = request.headers.get("content-type", "")
@@ -127,13 +137,9 @@ async def recognize(request: Request):
         return {"error": str(e), "name": "Unknown", "confidence": 0.0}
 
 
-# ── Student Registration ───────────────────────────────────────────────────────
 @app.post("/register/photo")
 async def register_photo(request: Request):
-    """
-    Save a single photo for a student.
-    Body: { "name": "John_Doe", "image": "data:image/jpeg;base64,..." }
-    """
+    """Save photo and generate embedding → store in Supabase."""
     body  = await request.json()
     name  = body.get("name", "").strip().replace(" ", "_")
     image = body.get("image", "")
@@ -141,148 +147,87 @@ async def register_photo(request: Request):
     if not name or not image:
         return {"error": "Name and image required"}
 
-    # Save to dataset folder
-    save_dir = os.path.join(DATASET_PATH, name)
-    os.makedirs(save_dir, exist_ok=True)
-
     frame = decode_base64_image(image)
     if frame is None:
         return {"error": "Could not decode image"}
 
-    # Auto-increment photo index
-    existing = len([f for f in os.listdir(save_dir) if f.endswith(".jpg")])
-    save_path = os.path.join(save_dir, f"{existing + 1}.jpg")
-    cv2.imwrite(save_path, frame)
+    try:
+        emb_obj = DeepFace.represent(
+            img_path=frame,
+            model_name="Facenet",
+            enforce_detection=False
+        )
+        embedding = emb_obj[0]["embedding"]
 
-    count = existing + 1
-    print(f"[Register] Saved photo {count} for '{name}' → {save_path}")
+        # Save embedding to Supabase
+        supabase.table("encodings").insert({
+            "student_name": name,
+            "embedding":    embedding
+        }).execute()
 
-    return {
-        "message": f"Photo {count} saved for {name}",
-        "count":   count,
-        "name":    name,
-        "ready":   count >= 10   # suggest training after 10 photos
-    }
+        # Count how many photos this student has
+        count_res = supabase.table("encodings").select("id").eq("student_name", name).execute()
+        count = len(count_res.data)
+
+        print(f"[Register] Saved embedding {count} for '{name}'")
+        return {
+            "message": f"Photo {count} saved for {name}",
+            "count":   count,
+            "name":    name,
+            "ready":   count >= 10
+        }
+    except Exception as e:
+        return {"error": str(e)}
 
 
 @app.post("/register/train")
 async def register_train(request: Request):
-    """
-    Build embeddings for a specific student (or all students).
-    Body: { "name": "John_Doe" }  or  { "name": "all" }
-    """
+    """For Supabase version - embeddings saved per photo, no separate training needed."""
     body = await request.json()
-    name = body.get("name", "all").strip().replace(" ", "_")
-
-    # Decide which folders to process
-    if name == "all":
-        folders = [f for f in os.listdir(DATASET_PATH)
-                   if os.path.isdir(os.path.join(DATASET_PATH, f))]
-    else:
-        folders = [name]
-
-    new_encodings = []
-    new_names     = []
-    skipped       = 0
-    processed     = 0
-
-    for folder in folders:
-        folder_path = os.path.join(DATASET_PATH, folder)
-        if not os.path.isdir(folder_path):
-            continue
-
-        images = [f for f in os.listdir(folder_path) if f.endswith(".jpg")]
-        print(f"[Train] Processing {folder} — {len(images)} images")
-
-        for img_file in images:
-            img_path = os.path.join(folder_path, img_file)
-            try:
-                frame = cv2.imread(img_path)
-                if frame is None:
-                    skipped += 1
-                    continue
-
-                emb_obj = DeepFace.represent(
-                    img_path=frame,
-                    model_name="Facenet",
-                    enforce_detection=False
-                )
-                emb = np.array(emb_obj[0]["embedding"], dtype=np.float64)
-                new_encodings.append(emb)
-                new_names.append(folder)
-                processed += 1
-
-            except Exception as e:
-                print(f"  ⚠ Skipped {img_file}: {e}")
-                skipped += 1
-
-    if not new_encodings:
-        return {"error": "No faces found in images", "processed": 0}
-
-    # If training specific student: merge with existing encodings
-    if name != "all" and os.path.exists(ENCODINGS_FILE):
-        with open(ENCODINGS_FILE, "rb") as f:
-            existing_data = pickle.load(f)
-        # Keep all encodings EXCEPT the student being retrained
-        keep_enc  = [e for e, n in zip(existing_data["encodings"], existing_data["names"]) if n != name]
-        keep_names = [n for n in existing_data["names"] if n != name]
-        new_encodings = keep_enc + new_encodings
-        new_names     = keep_names + new_names
-
-    # Save updated encodings
-    with open(ENCODINGS_FILE, "wb") as f:
-        pickle.dump({"encodings": new_encodings, "names": new_names}, f)
-
-    # Reload encodings into memory
-    load_encodings()
-
-    print(f"[Train] Done. {processed} embeddings built, {skipped} skipped.")
+    name = body.get("name", "").strip().replace(" ", "_")
+    count_res = supabase.table("encodings").select("id").eq("student_name", name).execute()
+    count = len(count_res.data)
     return {
-        "message":    f"Training complete for '{name}'",
-        "processed":  processed,
-        "skipped":    skipped,
-        "total_students": len(set(known_names)),
-        "total_encodings": len(known_encodings)
+        "message":   f"'{name}' has {count} embeddings ready",
+        "processed": count,
+        "skipped":   0,
+        "total_students": len(set([r["student_name"] for r in load_encodings_from_supabase()])),
+        "total_encodings": len(load_encodings_from_supabase())
     }
 
 
 @app.get("/students")
 def get_students():
-    students = []
-    if os.path.exists(DATASET_PATH):
-        for folder in os.listdir(DATASET_PATH):
-            folder_path = os.path.join(DATASET_PATH, folder)
-            if os.path.isdir(folder_path):
-                photo_count = len([f for f in os.listdir(folder_path) if f.endswith(".jpg")])
-                students.append({"name": folder, "photos": photo_count})
+    records = load_encodings_from_supabase()
+    counts  = {}
+    for r in records:
+        n = r["student_name"]
+        counts[n] = counts.get(n, 0) + 1
+    students = [{"name": k, "photos": v} for k, v in counts.items()]
     return {"students": students, "total": len(students)}
 
 
 @app.get("/attendance")
 def get_attendance():
-    rows = []
-    if os.path.exists("attendance.csv"):
-        with open("attendance.csv", "r") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                rows.append(row)
+    response = supabase.table("attendance").select("*").order("created_at", desc=True).execute()
+    rows = [{"Name": r["name"], "Date": r["date"], "Time": r["time"]} for r in (response.data or [])]
     return {"attendance": rows, "total": len(rows)}
 
 
 @app.get("/session")
 def get_session():
     return {
-        "present": logger.get_session_list(),
-        "count":   len(logger.get_session_list())
+        "present": list(session_marked),
+        "count":   len(session_marked)
     }
 
 
 @app.post("/reset")
 def reset_session():
-    logger._session_marked.clear()
+    session_marked.clear()
     return {"message": "Session reset successfully"}
 
 
 @app.get("/")
 def root():
-    return {"status": "Face Attendance API running ✅"}
+    return {"status": "Face Attendance API running with Supabase ✅"}
