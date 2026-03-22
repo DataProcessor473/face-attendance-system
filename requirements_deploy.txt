@@ -1,9 +1,10 @@
 fastapi
 uvicorn
-deepface
+deepface==0.0.79
 opencv-python-headless
 numpy
 python-multipart
 python-dotenv
 supabase
+tensorflow==2.13.0
 tf-keras
