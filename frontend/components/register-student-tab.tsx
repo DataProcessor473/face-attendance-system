@@ -25,9 +25,10 @@ export function RegisterStudentTab() {
   const [trainingStatus, setTrainingStatus] = useState<"idle" | "success" | "error">("idle")
 
   // Start webcam on mount
-  useEffect(() => {
-    startStream()
-  }, [startStream])
+useEffect(() => {
+  fetch(`${API_BASE}/`).catch(() => {})
+  startStream()
+}, [startStream])
 
   const handleCapture = useCallback(async () => {
     if (!studentName.trim()) {
