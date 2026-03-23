@@ -8,7 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { useWebcam } from "@/hooks/use-webcam"
 import { Users, UserCheck, RotateCcw } from "lucide-react"
 
-const API_BASE = "https://face-attendance-system-dgj7.onrender.com"
+const API_BASE = "http://localhost:8000"
 
 interface RecognitionResult {
   name: string

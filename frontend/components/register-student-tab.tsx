@@ -9,7 +9,7 @@ import { Spinner } from "@/components/ui/spinner"
 import { useWebcam } from "@/hooks/use-webcam"
 import { Camera, Rocket, CheckCircle, XCircle, Lightbulb } from "lucide-react"
 
-const API_BASE = "https://face-attendance-system-dgj7.onrender.com"
+const API_BASE = "http://localhost:8000"
 
 interface CapturedPhoto {
   id: number

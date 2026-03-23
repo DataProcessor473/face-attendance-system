@@ -7,7 +7,8 @@ import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { RefreshCw, UserPlus, CheckCircle } from "lucide-react"
 
-const API_BASE = "https://face-attendance-system-dgj7.onrender.com"
+const API_BASE = "http://localhost:8000"
+
 
 interface Student {
   name: string
